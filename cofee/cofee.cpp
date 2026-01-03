@@ -3,22 +3,27 @@
 #include <string>
 #include <filesystem>
 #include <vector>
-#include <map> 
+#include <map>
 #include <iomanip>
 #include <limits>
+#include <thread> 
+#include <mutex>  
+#include <atomic> 
 #include <chrono>
-#include <sstream>
 
 namespace fs = std::filesystem;
+
+// --- shared data structures ---
 
 struct LanguageStats {
     int fileCount = 0;
     int codeLines = 0;
 };
 
-// extension checker
-bool isCodeFile(const fs::path& filePath)
-{
+std::mutex g_statsMutex;
+
+
+bool isCodeFile(const fs::path& filePath) {
     std::string ext = filePath.extension().string();
     return (ext == ".cpp" || ext == ".h" || ext == ".hpp" ||
         ext == ".c" || ext == ".cs" ||
@@ -28,253 +33,228 @@ bool isCodeFile(const fs::path& filePath)
         ext == ".vue" || ext == ".json");
 }
 
-bool hasRealCode(const std::string& line, bool& inBlockComment)
-{
+bool hasRealCode(const std::string& line, bool& inBlockComment) {
     bool foundCode = false;
-
-    for (size_t i = 0; i < line.length(); i++)
-    {
-        if (inBlockComment)
-        {
-            // check if we found the exit door "*/"
-            if (i + 1 < line.length() && line[i] == '*' && line[i + 1] == '/')
-            {
-                inBlockComment = false;
-                i++;
+    for (size_t i = 0; i < line.length(); i++) {
+        if (inBlockComment) {
+            if (i + 1 < line.length() && line[i] == '*' && line[i + 1] == '/') {
+                inBlockComment = false; i++;
             }
             continue;
         }
-
-        // check for start of /* block */
-        if (i + 1 < line.length() && line[i] == '/' && line[i + 1] == '*')
-        {
-            inBlockComment = true;
-            i++;
-            continue;
+        if (i + 1 < line.length() && line[i] == '/' && line[i + 1] == '*') {
+            inBlockComment = true; i++; continue;
         }
-
-        // check for single line comment //
-        if (i + 1 < line.length() && line[i] == '/' && line[i + 1] == '/')
-        {
+        if (i + 1 < line.length() && line[i] == '/' && line[i + 1] == '/') {
             break;
         }
-
-        if (!std::isspace(static_cast<unsigned char>(line[i])))
-        {
+        if (!std::isspace(static_cast<unsigned char>(line[i]))) {
             foundCode = true;
         }
     }
-
     return foundCode;
 }
 
+
 void printReport(std::ostream& out, const std::string& path,
     const std::map<std::string, LanguageStats>& statsMap,
-    int totalLines, bool verbose, const std::string& maxFile, int maxLines,
+    int totalLines,
+    bool verbose,
+    const std::string& maxFile, int maxLines,
     const std::string& minFile, int minLines)
 {
-    // Add timestamp to report
-    auto now = std::chrono::system_clock::now();
-    auto time = std::chrono::system_clock::to_time_t(now);
-    char timeStr[100];
-    std::strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", std::localtime(&time));
-
-    out << "================================================\n";
-    out << "       COFEE - CODE COUNTER REPORT\n";
-    out << "================================================\n";
-    out << "Generated: " << timeStr << "\n";
-    out << "Project:   " << path << "\n";
-    out << "================================================\n\n";
-
+    out << "------------------------------------------------\n";
+    out << "PROJECT SCAN REPORT: " << path << "\n";
+    out << "------------------------------------------------\n";
     out << std::left << std::setw(15) << "TYPE"
         << std::setw(15) << "FILES"
         << std::setw(15) << "LINES (CODE)" << "\n";
     out << "------------------------------------------------\n";
 
-    for (const auto& [ext, stat] : statsMap)
-    {
+    for (const auto& [ext, stat] : statsMap) {
         out << std::left << std::setw(15) << ext
             << std::setw(15) << stat.fileCount
             << std::setw(15) << stat.codeLines << "\n";
     }
     out << "------------------------------------------------\n";
-    out << "TOTAL REAL CODE: " << totalLines << " lines\n";
-    out << "================================================\n";
+    out << "TOTAL REAL CODE: " << totalLines << "\n";
+    out << "------------------------------------------------\n";
 
-    if (verbose)
-    {
+    if (verbose) {
         out << "\n[VERBOSE ANALYTICS]\n";
         out << "Largest File:  " << fs::path(maxFile).filename().string() << " (" << maxLines << " lines)\n";
         out << "              -> " << maxFile << "\n";
         out << "Smallest File: " << fs::path(minFile).filename().string() << " (" << minLines << " lines)\n";
         out << "              -> " << minFile << "\n";
-        out << "================================================\n";
+        out << "------------------------------------------------\n";
     }
 }
 
-// find the next available report filename
-std::string getNextReportFilename(const fs::path& targetDir)
+
+void workerFunction(const std::vector<fs::path>& filesToProcess,
+    std::map<std::string, LanguageStats>& statsMap,
+    std::atomic<int>& totalCodeLines,
+    std::atomic<int>& processedFileCount,
+    std::string& currentLongestFile, std::atomic<int>& currentMaxLines,
+    std::string& currentShortestFile, std::atomic<int>& currentMinLines)
 {
-    std::string baseName = "cofee_report";
-    std::string extension = ".txt";
+    bool inBlockComment = false; //local state for block comments
 
-    // check if base file exists
-    fs::path reportPath = targetDir / (baseName + extension);
-    if (!fs::exists(reportPath))
+    for (const auto& filePath : filesToProcess)
     {
-        return reportPath.string();
-    }
+        std::ifstream fileReader(filePath.string());
+        if (!fileReader.is_open()) continue;
 
-    // find next available number
-    int counter = 1;
-    while (true)
-    {
-        std::string numberedName = baseName + "[" + std::to_string(counter) + "]" + extension;
-        reportPath = targetDir / numberedName;
+        std::string ext = filePath.extension().string();
+        std::string line;
+        int fileRealLines = 0;
 
-        if (!fs::exists(reportPath))
-        {
-            return reportPath.string();
+        inBlockComment = false;
+        while (std::getline(fileReader, line)) {
+            if (hasRealCode(line, inBlockComment)) {
+                fileRealLines++;
+            }
         }
-        counter++;
+
+        // std::lock_guard automatically locks the mutex and unlocks it when it goes out of scope.
+        std::lock_guard<std::mutex> lock(g_statsMutex);
+
+        statsMap[ext].fileCount++;
+        statsMap[ext].codeLines += fileRealLines;
+
+        totalCodeLines += fileRealLines;
+        processedFileCount++;
+
+        // update longest/shortest
+        if (fileRealLines > currentMaxLines) {
+            currentMaxLines = fileRealLines;
+            currentLongestFile = filePath.string(); // this string assignment is thread safe for unique strings
+        }
+        if (fileRealLines < currentMinLines) {
+            currentMinLines = fileRealLines;
+            currentShortestFile = filePath.string();
+        }
     }
 }
+
+// --- main functionality ---
 
 int main(int argc, char* argv[])
 {
+    auto start_time = std::chrono::high_resolution_clock::now();
+
     std::string path = ".";
     bool generateReport = false;
     bool verbose = false;
 
-    for (int i = 1; i < argc; i++)
-    {
+    for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if (arg == "--report" || arg == "-r")
-        {
+        if (arg == "--report" || arg == "-r") {
             generateReport = true;
         }
         else if (arg == "--verbose" || arg == "-v") {
             verbose = true;
         }
-        else if (arg == "--help" || arg == "-h") {
-            std::cout << "COFEE - Code Counter Tool\n";
-            std::cout << "Usage: cofee [path] [options]\n\n";
-            std::cout << "Options:\n";
-            std::cout << "  -r, --report    Generate a report file\n";
-            std::cout << "  -v, --verbose   Show detailed analytics\n";
-            std::cout << "  -h, --help      Show this help message\n\n";
-            std::cout << "Examples:\n";
-            std::cout << "  cofee .                    # Scan current directory\n";
-            std::cout << "  cofee C:\\MyProject -r     # Scan and generate report\n";
-            std::cout << "  cofee . -r -v              # Scan with verbose report\n";
-            return 0;
-        }
-        else if (arg[0] != '-')
-        {
+        else if (arg[0] != '-') {
             path = arg;
         }
     }
 
-    if (!fs::exists(path) || !fs::is_directory(path))
-    {
+    if (!fs::exists(path) || !fs::is_directory(path)) {
         std::cerr << "Error: The path '" << path << "' does not exist or is not a directory.\n";
         return 1;
     }
 
+    // --- data to be shared and updated by threads ---
     std::map<std::string, LanguageStats> statsMap;
-    int totalLines = 0;
-    int fileCount = 0;
+    std::atomic<int> totalCodeLines = 0; 
+    std::atomic<int> processedFileCount = 0; 
 
     std::string longestFile = "";
-    int maxLines = -1;
+    std::atomic<int> maxLines = -1;
 
     std::string shortestFile = "";
-    int minLines = std::numeric_limits<int>::max();
+    std::atomic<int> minLines = std::numeric_limits<int>::max();
 
-    std::cout << "Scanning " << path << "...\n";
-    for (auto it = fs::recursive_directory_iterator(path); it != fs::recursive_directory_iterator(); ++it)
+    // collect all files to be processed
+    std::vector<fs::path> allFiles;
+    std::cout << "Collecting files in " << path << "...\n";
+    for (auto const& entry : fs::recursive_directory_iterator(path))
     {
-        const auto& entry = *it;
         std::string pathStr = entry.path().string();
 
-        // ignore Logic
         if (pathStr.find("node_modules") != std::string::npos ||
             pathStr.find(".git") != std::string::npos ||
             pathStr.find("dist") != std::string::npos ||
             pathStr.find(".vs") != std::string::npos ||
-            pathStr.find("build") != std::string::npos) ||
             pathStr.find("vendor") != std::string::npos ||      
             pathStr.find("packages") != std::string::npos ||    
             pathStr.find("lib") != std::string::npos ||         
             pathStr.find("target") != std::string::npos ||      
             pathStr.find("__pycache__") != std::string::npos || 
-            pathStr.find(".next") != std::string::npos ||      
-            pathStr.find(".nuxt") != std::string::npos
-        {
-            it.disable_recursion_pending();
+            pathStr.find(".next") != std::string::npos || 
+            pathStr.find(".nuxt") != std::string::npos ||
+            pathStr.find("build") != std::string::npos) {
             continue;
         }
 
-        if (entry.is_regular_file() && isCodeFile(entry.path()))
-        {
-            std::ifstream fileReader(pathStr);
-            if (!fileReader.is_open()) continue;
-            std::string ext = entry.path().extension().string();
-
-            std::string line;
-            bool inBlockComment = false;
-            int fileRealLines = 0;
-
-            while (std::getline(fileReader, line))
-            {
-                if (hasRealCode(line, inBlockComment))
-                    fileRealLines++;
-            }
-
-            statsMap[ext].fileCount++;
-            statsMap[ext].codeLines += fileRealLines;
-            totalLines += fileRealLines;
-            fileCount++;
-
-            if (fileRealLines > maxLines) {
-                maxLines = fileRealLines;
-                longestFile = pathStr;
-            }
-
-            if (fileRealLines < minLines) {
-                minLines = fileRealLines;
-                shortestFile = pathStr;
-            }
-
-            // progress indicator
-            std::cout << "\r[Scanning] Files: " << fileCount
-                << " | Lines: " << totalLines << "   " << std::flush;
+        if (entry.is_regular_file() && isCodeFile(entry.path())) {
+            allFiles.push_back(entry.path());
         }
     }
+    std::cout << "Found " << allFiles.size() << " relevant files. Starting scan...\n";
 
-    std::cout << "\r[Done] Scanned " << fileCount << " files.                                  \n";
+    unsigned int numThreads = std::thread::hardware_concurrency();
+    if (numThreads == 0) numThreads = 1; 
 
-    printReport(std::cout, path, statsMap, totalLines, verbose, longestFile, maxLines, shortestFile, minLines);
+    std::vector<std::thread> threads;
+    std::vector<std::vector<fs::path>> threadFileChunks(numThreads);
 
-    if (generateReport)
-    {
-        // get the scanned project directory (where reports should be saved)
-        fs::path targetDir = fs::absolute(path);
-        std::string reportPath = getNextReportFilename(targetDir);
+    // distribute files among threads
+    for (size_t i = 0; i < allFiles.size(); ++i) {
+        threadFileChunks[i % numThreads].push_back(allFiles[i]);
+    }
 
-        std::ofstream reportFile(reportPath);
-        if (reportFile.is_open())
-        {
-            printReport(reportFile, path, statsMap, totalLines, verbose, longestFile, maxLines, shortestFile, minLines);
-            reportFile.close();
-            std::cout << "\n[Success] Report saved to:\n";
-            std::cout << "  -> " << reportPath << "\n";
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        threads.emplace_back(workerFunction, std::cref(threadFileChunks[i]),
+            std::ref(statsMap),
+            std::ref(totalCodeLines),
+            std::ref(processedFileCount),
+            std::ref(longestFile), std::ref(maxLines),
+            std::ref(shortestFile), std::ref(minLines));
+    }
+
+    while (processedFileCount < allFiles.size()) {
+        std::cout << "\r[Scanning] Files: " << processedFileCount
+            << "/" << allFiles.size() << " | Lines: " << totalCodeLines << "   " << std::flush;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100)); 
+    }
+
+    for (auto& t : threads) {
+        t.join();
+    }
+
+    std::cout << "\r[Done] Scanned " << processedFileCount << "/" << allFiles.size() << " files.                                  \n";
+
+    if (allFiles.empty()) minLines = 0;
+
+    // print reports
+    printReport(std::cout, path, statsMap, totalCodeLines, verbose, longestFile, maxLines, shortestFile, minLines);
+
+    if (generateReport) {
+        std::ofstream reportFile("cofee_report.txt");
+        if (reportFile.is_open()) {
+            printReport(reportFile, path, statsMap, totalCodeLines, verbose, longestFile, maxLines, shortestFile, minLines);
+            std::cout << "[Success] Report saved to 'cofee_report.txt'\n";
         }
-        else
-        {
+        else {
             std::cerr << "[Error] Could not write report file.\n";
         }
     }
+
+    auto end_time = std::chrono::high_resolution_clock::now(); 
+    std::chrono::duration<double> duration = end_time - start_time;
+    std::cout << "Execution time: " << std::fixed << std::setprecision(3) << duration.count() << " seconds\n"; 
 
     return 0;
 }

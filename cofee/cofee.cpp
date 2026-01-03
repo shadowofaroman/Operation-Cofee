@@ -125,17 +125,23 @@ int main(int argc, char* argv[])
             {
 
                 if (hasRealCode(line, inBlockComment))
-                {
                     fileRealLines++;
-                }
+                
             }
 
             statsMap[ext].fileCount++;
             statsMap[ext].codeLines += fileRealLines;
 
             totalLines += fileRealLines;
+            fileCount++;
+
+            // progress indicator
+            std::cout << "\r[Scanning] Files: " << fileCount
+                << " | Lines: " << totalLines << "   " << std::flush;
         }
     }
+
+    std::cout << "\r[Done] Scanned " << fileCount << " files.                                  \n";
 
     std::cout << "------------------------------------------------\n";
     std::cout << std::left << std::setw(15) << "TYPE"

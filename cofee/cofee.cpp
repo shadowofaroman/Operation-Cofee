@@ -2,71 +2,116 @@
 #include <fstream>
 #include <string>
 #include <filesystem>
-#include <cctype>
+#include <vector>
 
 namespace fs = std::filesystem;
 
-bool isLineEmpty(const std::string& line)
-{
-    for (char c : line)
-    {
-        if (!std::isspace(static_cast<unsigned char>(c)))
-        {
-            return false; 
-        }
-    }
-    return true; 
-}
-
+// extension checker
 bool isCodeFile(const fs::path& filePath)
 {
     std::string ext = filePath.extension().string();
     return (ext == ".cpp" || ext == ".h" || ext == ".hpp" ||
-        ext == ".c" || ext == ".java" || ext == ".py");
+        ext == ".c" || ext == ".cs" ||
+        ext == ".js" || ext == ".ts" ||
+        ext == ".jsx" || ext == ".tsx" ||
+        ext == ".css" || ext == ".scss" || ext == ".html" ||
+        ext == ".vue" || ext == ".json");
+}
+
+bool hasRealCode(const std::string& line, bool& inBlockComment)
+{
+    bool foundCode = false;
+
+    for (size_t i = 0; i < line.length(); i++)
+    {
+        if (inBlockComment)
+        {
+            // check if we found the exit door "*/"
+            if (i + 1 < line.length() && line[i] == '*' && line[i + 1] == '/')
+            {
+                inBlockComment = false; 
+                i++; 
+            }
+            continue;
+        }
+
+        // check for start of /* block */
+        if (i + 1 < line.length() && line[i] == '/' && line[i + 1] == '*')
+        {
+            inBlockComment = true; 
+            i++; 
+            continue;
+        }
+
+        // check for single line comment //
+        if (i + 1 < line.length() && line[i] == '/' && line[i + 1] == '/')
+        {
+            break;
+        }
+
+        if (!std::isspace(static_cast<unsigned char>(line[i])))
+        {
+            foundCode = true;
+        }
+    }
+
+    return foundCode;
 }
 
 int main()
 {
-    std::string path = "E:\\V33\\js";
+    std::string path = "E:\\V33";
+
     int totalLines = 0;
-    int nonEmptyLines = 0;
+    int realCodeLines = 0;
     int fileCount = 0;
 
-    for (const auto& entry : fs::recursive_directory_iterator(path))
+    std::cout << "Scanning " << path << "...\n";
+
+    for (auto it = fs::recursive_directory_iterator(path); it != fs::recursive_directory_iterator(); ++it)
     {
+        const auto& entry = *it;
+        std::string pathStr = entry.path().string();
+
+        // ignore Logic
+        if (pathStr.find("node_modules") != std::string::npos ||
+            pathStr.find(".git") != std::string::npos ||
+            pathStr.find("dist") != std::string::npos ||
+            pathStr.find(".vs") != std::string::npos ||
+            pathStr.find("build") != std::string::npos)
+        {
+            it.disable_recursion_pending();
+            continue;
+        }
+
         if (entry.is_regular_file() && isCodeFile(entry.path()))
         {
-            std::string currentPath = entry.path().string();
-            std::ifstream fileReader(currentPath);
-
-            if (!fileReader.is_open())
-            {
-                std::cerr << "Could not open: " << currentPath << "\n";
-                continue;
-            }
+            std::ifstream fileReader(pathStr);
+            if (!fileReader.is_open()) continue;
 
             std::string line;
+
+            bool inBlockComment = false;
+
             while (std::getline(fileReader, line))
             {
                 totalLines++;
 
-                if (!isLineEmpty(line))
+                if (hasRealCode(line, inBlockComment))
                 {
-                    nonEmptyLines++;
+                    realCodeLines++;
                 }
             }
-
-            fileReader.close();
             fileCount++;
-            std::cout << "Scanned: " << currentPath << "\n";
         }
     }
 
     std::cout << "--------------------------------\n";
+    std::cout << "Project: " << path << "\n";
     std::cout << "Total Files: " << fileCount << "\n";
-    std::cout << "Total Lines: " << totalLines << "\n";
-    std::cout << "Non-Empty Lines: " << nonEmptyLines << "\n";
-    std::cout << "Empty/Whitespace Lines: " << (totalLines - nonEmptyLines) << "\n";
+    std::cout << "Raw Lines: " << totalLines << "\n";
+    std::cout << "Real Code Lines: " << realCodeLines << "\n";
+    std::cout << "Comment/Empty Lines: " << (totalLines - realCodeLines) << "\n";
 
     return 0;
 }

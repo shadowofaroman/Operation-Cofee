@@ -3,8 +3,15 @@
 #include <string>
 #include <filesystem>
 #include <vector>
+#include <map> 
+#include <iomanip>
 
 namespace fs = std::filesystem;
+
+struct LanguageStats {
+    int fileCount = 0;
+    int codeLines = 0;
+};
 
 // extension checker
 bool isCodeFile(const fs::path& filePath)
@@ -61,6 +68,7 @@ bool hasRealCode(const std::string& line, bool& inBlockComment)
 int main()
 {
     std::string path = "E:\\V33";
+    std::map<std::string, LanguageStats> statsMap;
 
     int totalLines = 0;
     int realCodeLines = 0;
@@ -88,30 +96,44 @@ int main()
         {
             std::ifstream fileReader(pathStr);
             if (!fileReader.is_open()) continue;
+            std::string ext = entry.path().extension().string();
 
             std::string line;
 
             bool inBlockComment = false;
+            int fileRealLines = 0;
 
             while (std::getline(fileReader, line))
             {
-                totalLines++;
 
                 if (hasRealCode(line, inBlockComment))
                 {
-                    realCodeLines++;
+                    fileRealLines++;
                 }
             }
-            fileCount++;
+
+            statsMap[ext].fileCount++;
+            statsMap[ext].codeLines += fileRealLines;
+
+            totalLines += fileRealLines;
         }
     }
 
-    std::cout << "--------------------------------\n";
-    std::cout << "Project: " << path << "\n";
-    std::cout << "Total Files: " << fileCount << "\n";
-    std::cout << "Raw Lines: " << totalLines << "\n";
-    std::cout << "Real Code Lines: " << realCodeLines << "\n";
-    std::cout << "Comment/Empty Lines: " << (totalLines - realCodeLines) << "\n";
+    std::cout << "------------------------------------------------\n";
+    std::cout << std::left << std::setw(15) << "TYPE"
+        << std::setw(15) << "FILES"
+        << std::setw(15) << "LINES (CODE)" << "\n";
+    std::cout << "------------------------------------------------\n";
+
+    for (const auto& [ext, stat] : statsMap)
+    {
+        std::cout << std::left << std::setw(15) << ext
+            << std::setw(20) << stat.fileCount
+            << std::setw(15) << stat.codeLines << "\n";
+    }
+
+    std::cout << "------------------------------------------------\n";
+    std::cout << "TOTAL REAL CODE: " << totalLines << "\n";
 
     return 0;
 }

@@ -65,9 +65,27 @@ bool hasRealCode(const std::string& line, bool& inBlockComment)
     return foundCode;
 }
 
-int main()
+int main(int argc, char* argv[])
 {
-    std::string path = "E:\\V33";
+    std::string path;
+
+    if (argc >= 2)
+    {
+        path = argv[1];
+    }
+    else 
+    {
+        std::cout << "No path specified. Scanning current directory...\n";
+        std::cout << "Usage: cofee <path-to-folder>\n\n";
+        path = ".";
+    }
+
+    if (!fs::exists(path) || !fs::is_directory(path)) 
+    {
+        std::cerr << "Error: The path '" << path << "' does not exist or is not a directory.\n";
+        return 1;
+    }
+
     std::map<std::string, LanguageStats> statsMap;
 
     int totalLines = 0;

@@ -65,35 +65,58 @@ bool hasRealCode(const std::string& line, bool& inBlockComment)
     return foundCode;
 }
 
+void printReport(std::ostream& out, const std::string& path,
+    const std::map<std::string, LanguageStats>& statsMap,
+    int totalLines)
+{
+    out << "------------------------------------------------\n";
+    out << "PROJECT SCAN REPORT: " << path << "\n";
+    out << "------------------------------------------------\n";
+    out << std::left << std::setw(15) << "TYPE"
+        << std::setw(15) << "FILES"
+        << std::setw(15) << "LINES (CODE)" << "\n";
+    out << "------------------------------------------------\n";
+
+    for (const auto& [ext, stat] : statsMap)
+    {
+        out << std::left << std::setw(15) << ext
+            << std::setw(15) << stat.fileCount
+            << std::setw(15) << stat.codeLines << "\n";
+    }
+    out << "------------------------------------------------\n";
+    out << "TOTAL REAL CODE: " << totalLines << "\n";
+    out << "------------------------------------------------\n";
+}
+
 int main(int argc, char* argv[])
 {
-    std::string path;
+    std::string path = ".";
+    bool generateReport = false;
 
-    if (argc >= 2)
+    for (int i = 1; i < argc; i++)
     {
-        path = argv[1];
-    }
-    else 
-    {
-        std::cout << "No path specified. Scanning current directory...\n";
-        std::cout << "Usage: cofee <path-to-folder>\n\n";
-        path = ".";
+        std::string arg = argv[i];
+        if (arg == "--report" || arg == "-r")
+        {
+            generateReport = true;
+        }
+        else if (arg[0] != '-')
+        {
+            path = arg;
+        }
     }
 
-    if (!fs::exists(path) || !fs::is_directory(path)) 
+    if (!fs::exists(path) || !fs::is_directory(path))
     {
         std::cerr << "Error: The path '" << path << "' does not exist or is not a directory.\n";
         return 1;
     }
 
     std::map<std::string, LanguageStats> statsMap;
-
     int totalLines = 0;
-    int realCodeLines = 0;
     int fileCount = 0;
 
     std::cout << "Scanning " << path << "...\n";
-
     for (auto it = fs::recursive_directory_iterator(path); it != fs::recursive_directory_iterator(); ++it)
     {
         const auto& entry = *it;
@@ -117,21 +140,17 @@ int main(int argc, char* argv[])
             std::string ext = entry.path().extension().string();
 
             std::string line;
-
             bool inBlockComment = false;
             int fileRealLines = 0;
 
             while (std::getline(fileReader, line))
             {
-
                 if (hasRealCode(line, inBlockComment))
                     fileRealLines++;
-                
             }
 
             statsMap[ext].fileCount++;
             statsMap[ext].codeLines += fileRealLines;
-
             totalLines += fileRealLines;
             fileCount++;
 
@@ -143,21 +162,22 @@ int main(int argc, char* argv[])
 
     std::cout << "\r[Done] Scanned " << fileCount << " files.                                  \n";
 
-    std::cout << "------------------------------------------------\n";
-    std::cout << std::left << std::setw(15) << "TYPE"
-        << std::setw(15) << "FILES"
-        << std::setw(15) << "LINES (CODE)" << "\n";
-    std::cout << "------------------------------------------------\n";
+    printReport(std::cout, path, statsMap, totalLines);
 
-    for (const auto& [ext, stat] : statsMap)
+    if (generateReport)
     {
-        std::cout << std::left << std::setw(15) << ext
-            << std::setw(20) << stat.fileCount
-            << std::setw(15) << stat.codeLines << "\n";
+        std::ofstream reportFile("cofee_report.txt");
+        if (reportFile.is_open())
+        {
+            printReport(reportFile, path, statsMap, totalLines);
+            std::cout << "[Success] Report saved to 'cofee_report.txt'\n";
+        }
+        else
+        {
+            std::cerr << "[Error] Could not write report file.\n";
+        }
     }
 
-    std::cout << "------------------------------------------------\n";
-    std::cout << "TOTAL REAL CODE: " << totalLines << "\n";
 
     return 0;
 }

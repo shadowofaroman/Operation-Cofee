@@ -137,6 +137,23 @@ void workerFunction(const std::vector<fs::path>& filesToProcess,
     }
 }
 
+void printHelp() {
+    std::cout << "================================================\n";
+    std::cout << " COFEE - Codebase Frequency & Efficiency Engine \n";
+    std::cout << "================================================\n";
+    std::cout << "Usage:\n";
+    std::cout << "  cofee <path> [options]\n\n";
+    std::cout << "Options:\n";
+    std::cout << "  -v, --verbose    Show largest and smallest files.\n";
+    std::cout << "  -r, --report     Save a summary to 'cofee_report.txt'.\n";
+    std::cout << "  -h, --help       Show this help message.\n\n";
+    std::cout << "Examples:\n";
+    std::cout << "  cofee .\n";
+    std::cout << "  cofee C:\\MyProject -v\n";
+    std::cout << "  cofee E:\\V33 -r -v\n";
+    std::cout << "================================================\n";
+}
+
 // --- main functionality ---
 
 int main(int argc, char* argv[])
@@ -155,6 +172,11 @@ int main(int argc, char* argv[])
         else if (arg == "--verbose" || arg == "-v") {
             verbose = true;
         }
+        else if (arg == "--help" || arg == "-h") { 
+            printHelp();
+            return 0; 
+        }
+
         else if (arg[0] != '-') {
             path = arg;
         }

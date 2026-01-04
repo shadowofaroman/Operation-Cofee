@@ -1,7 +1,5 @@
 # COFEE
 
-**Codebase Frequency & Efficiency Engine**
-
 A high-performance C++ command-line tool for analyzing source code metrics across large-scale projects. COFEE provides accurate line counts by intelligently filtering comments, whitespace, and dependency directories while leveraging multi-threaded architecture for optimal performance.
 
 ## Overview
